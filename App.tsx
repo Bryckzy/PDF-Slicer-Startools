@@ -15,9 +15,9 @@ const App: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<ProcessedFile | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const findBeneficiary = (text: string): string | null => {
-    // Procura pelo rótulo do beneficiário
-    const label = "Nome do beneficiário";
+  const findPagador = (text: string): string | null => {
+    // Procura pelo rótulo do pagador no boleto
+    const label = "Nome do Pagador";
     const lowerText = text.toLowerCase();
     const idx = lowerText.indexOf(label.toLowerCase());
     
@@ -26,9 +26,10 @@ const App: React.FC = () => {
     // Extrai o conteúdo após o rótulo
     const afterLabel = text.substring(idx + label.length).trim();
     // Limpa caracteres iniciais comuns como ':' ou '-' e pega a primeira linha significativa
-    const cleanLine = afterLabel.replace(/^[:\-\s]+/, '').split('\n')[0];
+    // Remove também espaços extras para garantir que pegamos o nome logo após a label ou na linha abaixo
+    const cleanLine = afterLabel.replace(/^[:\-\s]+/, '').split('\n')[0].trim();
     
-    // Divide em palavras, filtra para pegar apenas palavras reais (sem números/CNPJ grudados)
+    // Divide em palavras, filtra para pegar apenas palavras reais (letras)
     const words = cleanLine.split(/\s+/).filter(w => /^[a-zA-ZÀ-ú]{2,}$/.test(w));
     
     if (words.length >= 2) {
@@ -84,14 +85,16 @@ const App: React.FC = () => {
         // Extrai o texto da página atual com reconstrução de linhas
         const text = await getPageText(originalArrayBuffer.slice(0), i);
         const docNumber = findDocNumber(text);
-        const beneficiary = findBeneficiary(text);
+        const pagador = findPagador(text);
 
-        // Constrói o nome final do arquivo
+        // Constrói o nome final do arquivo: PAGADOR_NUMERO.pdf
         let finalFileName = "";
-        if (beneficiary && docNumber) {
-          finalFileName = `${beneficiary}_${docNumber}.pdf`;
+        if (pagador && docNumber) {
+          finalFileName = `${pagador}_${docNumber}.pdf`;
         } else if (docNumber) {
           finalFileName = `${docNumber}.pdf`;
+        } else if (pagador) {
+          finalFileName = `${pagador}_PAG-${i}.pdf`;
         } else {
           finalFileName = `BOLETO-PAG-${i}.pdf`;
         }
@@ -172,7 +175,7 @@ const App: React.FC = () => {
           </div>
           <div className="hidden sm:flex items-center gap-4">
             <span className="bg-zinc-900 text-zinc-500 text-[10px] px-4 py-2 rounded-full font-bold uppercase tracking-widest border border-zinc-800">
-              Pattern: NOME_00000-0
+              Pattern: PAGADOR_00000-0
             </span>
           </div>
         </div>
