@@ -27,7 +27,6 @@ const App: React.FC = () => {
       for (let i = 1; i <= pageCount; i++) {
         setState(prev => ({ ...prev, progress: Math.round(((i - 1) / pageCount) * 100) }));
 
-        // Clona o buffer para evitar que o worker do pdf.js o desconecte
         const imageBuffer = originalArrayBuffer.slice(0);
         let docNumberRaw = "";
         
@@ -39,17 +38,25 @@ const App: React.FC = () => {
           docNumberRaw = "ERRO_LEITURA";
         }
         
-        // Limpeza do número do documento
+        // Limpeza avançada do retorno da IA
         let docNumber = docNumberRaw.trim().toUpperCase();
+        
+        // Se a IA retornar algo como "Número: 24277-4", removemos o prefixo
+        if (docNumber.includes(':')) {
+          docNumber = docNumber.split(':').pop()?.trim() || docNumber;
+        }
+
         if (docNumber === "NAO_ENCONTRADO" || docNumber === "ERRO_LEITURA" || docNumber === "ERRO_IA") {
           docNumber = `BOLETO-SEM-NUMERO-PAG-${i}`;
         } else {
-          // Mantém apenas números e hífens
+          // Mantém apenas números e hífens para o nome do arquivo
           docNumber = docNumber.replace(/[^0-9-]/g, '');
-          if (!docNumber) docNumber = `BOLETO-ID-PAG-${i}`;
+          // Validação mínima: se após a limpeza ficar vazio ou for apenas um hífen
+          if (!docNumber || docNumber === "-") {
+            docNumber = `BOLETO-ID-PAG-${i}`;
+          }
         }
 
-        // Extração da página individual
         const extractionBuffer = originalArrayBuffer.slice(0);
         const pagePdfBytes = await extractSinglePage(extractionBuffer, i);
         const blob = new Blob([pagePdfBytes], { type: 'application/pdf' });
@@ -73,7 +80,7 @@ const App: React.FC = () => {
       setState(prev => ({ 
         ...prev, 
         isProcessing: false, 
-        error: `ERRO DE PROCESSAMENTO: ${err.message || 'Falha técnica ao ler o PDF'}. Verifique se o arquivo não está protegido por senha.` 
+        error: `ERRO DE PROCESSAMENTO: ${err.message || 'Falha técnica ao ler o PDF'}. Verifique a integridade do arquivo.` 
       }));
     }
   };
@@ -240,7 +247,7 @@ const App: React.FC = () => {
                     <h4 className="text-xl font-black text-white truncate mb-2 group-hover:text-yellow-brand transition-colors" title={file.name}>
                       {file.name.replace('.pdf', '')}
                     </h4>
-                    <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-[0.2em]">Nome do Arquivo</p>
+                    <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-[0.2em]">Número Extraído</p>
                   </div>
 
                   <div className="mt-auto grid grid-cols-2 gap-4">
