@@ -2,72 +2,62 @@
 import { PDFDocument } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Configuração de worker usando unpkg que é altamente estável para produção
-// Mantemos a versão sincronizada com o import map (5.4.530)
+// Usando a versão .js (legacy) em vez de .mjs para evitar erros de MIME-type no Vercel
 const PDFJS_VERSION = '5.4.530';
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${PDFJS_VERSION}/build/pdf.worker.min.mjs`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`;
 
 export const getPageAsImage = async (pdfData: ArrayBuffer, pageNum: number): Promise<string> => {
   try {
-    // Convertemos para Uint8Array para maior compatibilidade com o pdf.js
     const data = new Uint8Array(pdfData);
     
     const loadingTask = pdfjsLib.getDocument({ 
       data,
-      // CMaps são essenciais para renderizar fontes de boletos corretamente
       cMapUrl: `https://unpkg.com/pdfjs-dist@${PDFJS_VERSION}/cmaps/`,
       cMapPacked: true,
+      disableFontFace: false // Importante para renderizar fontes de boletos corretamente
     });
     
     const pdf = await loadingTask.promise;
     const page = await pdf.getPage(pageNum);
     
-    // Escala 2.0 para garantir que o OCR do Gemini consiga ler os números pequenos
-    const viewport = page.getViewport({ scale: 2.0 });
+    // Escala 2.5 para maior nitidez no OCR em produção
+    const viewport = page.getViewport({ scale: 2.5 });
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     
-    if (!context) throw new Error('Falha ao obter contexto 2D do Canvas');
+    if (!context) throw new Error('Canvas context error');
     
     canvas.height = viewport.height;
     canvas.width = viewport.width;
     
-    await page.render({ canvasContext: context, viewport }).promise;
+    await page.render({ 
+      canvasContext: context, 
+      viewport,
+      intent: 'print' // Melhora a nitidez de textos e linhas
+    }).promise;
     
-    const base64 = canvas.toDataURL('image/png').split(',')[1];
+    const base64 = canvas.toDataURL('image/png', 0.9).split(',')[1];
     
-    // Cleanup
+    // Cleanup prevent memory leaks
     canvas.width = 0;
     canvas.height = 0;
     
     return base64;
   } catch (error) {
-    console.error("Erro técnico no processamento da página PDF:", error);
+    console.error("Erro render PDF page:", error);
     throw error;
   }
 };
 
 export const extractSinglePage = async (originalPdfData: ArrayBuffer, pageNum: number): Promise<Uint8Array> => {
-  try {
-    const srcDoc = await PDFDocument.load(originalPdfData);
-    const pdfDoc = await PDFDocument.create();
-    
-    const [copiedPage] = await pdfDoc.copyPages(srcDoc, [pageNum - 1]);
-    pdfDoc.addPage(copiedPage);
-    
-    return await pdfDoc.save();
-  } catch (error) {
-    console.error("Erro ao extrair página individual:", error);
-    throw error;
-  }
+  const srcDoc = await PDFDocument.load(originalPdfData);
+  const pdfDoc = await PDFDocument.create();
+  const [copiedPage] = await pdfDoc.copyPages(srcDoc, [pageNum - 1]);
+  pdfDoc.addPage(copiedPage);
+  return await pdfDoc.save();
 };
 
 export const getPageCount = async (pdfData: ArrayBuffer): Promise<number> => {
-  try {
-    const doc = await PDFDocument.load(pdfData);
-    return doc.getPageCount();
-  } catch (error) {
-    console.error("Erro ao ler contagem de páginas:", error);
-    throw error;
-  }
+  const doc = await PDFDocument.load(pdfData);
+  return doc.getPageCount();
 };

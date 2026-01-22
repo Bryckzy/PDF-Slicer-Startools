@@ -2,18 +2,26 @@
 import { GoogleGenAI } from "@google/genai";
 
 export const extractDocNumber = async (imageBase64: string): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  // Inicialização dentro da função para garantir captura da chave em tempo real (Vercel)
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) return "ERRO_SEM_CHAVE";
+
+  const ai = new GoogleGenAI({ apiKey });
   
-  const prompt = `Você é um especialista em processamento de boletos bancários.
-  Analise a imagem deste boleto e localize o campo "Num. do Documento", "Número do Documento" ou "Nº do Doc".
+  const prompt = `Você é um robô de OCR especializado em boletos brasileiros (Layout Bradesco/Febraban).
+  OBJETIVO: Localizar o número do campo "Num. do Documento" (Número do Documento).
   
-  Instruções:
-  1. O campo geralmente está localizado no cabeçalho do boleto, próximo à "Data do Documento".
-  2. O formato esperado é tipicamente de 5 a 10 dígitos seguidos de um hífen e um dígito (ex: 24277-4 ou 00012-3).
-  3. Ignore o "Nosso Número" ou a "Linha Digitável". Eu quero apenas o número que identifica o documento interno.
+  CARACTERÍSTICAS DO CAMPO:
+  1. Ele geralmente está logo à direita da "Data do Documento".
+  2. No boleto Bradesco, ele fica na parte superior esquerda do quadro de informações.
+  3. O formato comum é um número curto com um dígito verificador após o hífen (exemplo: 24277-4).
+  4. NÃO confunda com o "Nosso Número" (que é muito maior).
+  5. NÃO confunda com o "Código do Beneficiário" ou "Agência".
   
-  Responda APENAS com o número encontrado (ex: 24277-4). 
-  Se não encontrar nada que se pareça com um número de documento nesse formato, responda exatamente: "NAO_ENCONTRADO".`;
+  SAÍDA:
+  - Responda APENAS o número encontrado (ex: 24277-4).
+  - Se absolutamente não encontrar, responda: NAO_ENCONTRADO.
+  - Não inclua explicações ou texto adicional.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -25,14 +33,16 @@ export const extractDocNumber = async (imageBase64: string): Promise<string> => 
         ]
       },
       config: {
-        temperature: 0, // Determinístico
+        temperature: 0.1,
+        topP: 1,
+        topK: 1
       }
     });
 
     const result = response.text?.trim() || "NAO_ENCONTRADO";
     return result;
   } catch (error) {
-    console.error("Gemini OCR Error:", error);
+    console.error("Gemini API Error:", error);
     return "ERRO_IA";
   }
 };
