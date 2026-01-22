@@ -2,49 +2,55 @@
 import { PDFDocument } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Usando a versão .js (legacy) em vez de .mjs para evitar erros de MIME-type no Vercel
+// Sincronizando com a versão do importmap no index.html
 const PDFJS_VERSION = '5.4.530';
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`;
 
-export const getPageAsImage = async (pdfData: ArrayBuffer, pageNum: number): Promise<string> => {
+// Para versões recentes do PDF.js (v4+), o worker deve ser referenciado como um módulo (.mjs)
+// e preferencialmente do mesmo provedor que a biblioteca principal (esm.sh ou unpkg)
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${PDFJS_VERSION}/build/pdf.worker.min.mjs`;
+
+export const getPageText = async (pdfData: ArrayBuffer, pageNum: number): Promise<string> => {
   try {
     const data = new Uint8Array(pdfData);
-    
     const loadingTask = pdfjsLib.getDocument({ 
       data,
       cMapUrl: `https://unpkg.com/pdfjs-dist@${PDFJS_VERSION}/cmaps/`,
       cMapPacked: true,
-      disableFontFace: false // Importante para renderizar fontes de boletos corretamente
     });
     
     const pdf = await loadingTask.promise;
     const page = await pdf.getPage(pageNum);
+    const textContent = await page.getTextContent();
     
-    // Escala 2.5 para maior nitidez no OCR em produção
-    const viewport = page.getViewport({ scale: 2.5 });
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
+    // Agrupar itens por linha (y-coordinate)
+    // No pdf.js, transform[5] é a posição Y
+    const items = textContent.items as any[];
     
-    if (!context) throw new Error('Canvas context error');
-    
-    canvas.height = viewport.height;
-    canvas.width = viewport.width;
-    
-    await page.render({ 
-      canvasContext: context, 
-      viewport,
-      intent: 'print' // Melhora a nitidez de textos e linhas
-    }).promise;
-    
-    const base64 = canvas.toDataURL('image/png', 0.9).split(',')[1];
-    
-    // Cleanup prevent memory leaks
-    canvas.width = 0;
-    canvas.height = 0;
-    
-    return base64;
+    // Ordenar itens: Primeiro por Y (descendente) e depois por X (ascendente)
+    items.sort((a, b) => {
+      if (Math.abs(a.transform[5] - b.transform[5]) < 5) { // Mesma linha (tolerância de 5px)
+        return a.transform[4] - b.transform[4];
+      }
+      return b.transform[5] - a.transform[5];
+    });
+
+    let fullText = "";
+    let lastY = -1;
+
+    for (const item of items) {
+      if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) {
+        fullText += "\n"; // Quebra de linha se a posição Y mudou significativamente
+      } else if (lastY !== -1) {
+        fullText += " "; // Espaço entre palavras na mesma linha
+      }
+      fullText += item.str;
+      lastY = item.transform[5];
+    }
+      
+    return fullText;
   } catch (error) {
-    console.error("Erro render PDF page:", error);
+    console.error("Erro ao extrair texto do PDF:", error);
+    // Fallback: Tenta inicializar o worker de forma alternativa se falhar
     throw error;
   }
 };

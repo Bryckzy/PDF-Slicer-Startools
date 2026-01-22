@@ -1,8 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import { AppState, ProcessedFile } from './types';
-import { getPageCount, getPageAsImage, extractSinglePage } from './services/pdfService';
-import { extractDocNumber } from './services/geminiService';
+import { getPageCount, getPageText, extractSinglePage } from './services/pdfService';
 import JSZip from 'jszip';
 
 const App: React.FC = () => {
@@ -16,6 +15,40 @@ const App: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<ProcessedFile | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const findDocNumber = (text: string): string | null => {
+    // 1. Limpeza pesada: Remove espaços múltiplos e normaliza hífens
+    const cleanText = text.replace(/\s+/g, ' ').replace(/\s*-\s*/g, '-');
+    
+    // 2. Tenta encontrar a label "Num. do Documento" e pegar o valor próximo
+    // No OCR do Bradesco, geralmente vem "Data do Documento Num. do Documento ... 06/11/2025 24277-4"
+    // Vamos procurar por uma data seguida do padrão XXXXX-X
+    const dateAndNumberRegex = /(\d{2}\/\d{2}\/\d{4})\s*(\d{5}-\d)/g;
+    const dateMatches = [...cleanText.matchAll(dateAndNumberRegex)];
+    
+    if (dateMatches.length > 0) {
+      // Retorna o segundo grupo de captura (o número do documento) do primeiro match
+      return dateMatches[0][2];
+    }
+
+    // 3. Fallback: Busca apenas o padrão isolado de 5 dígitos + hífen + 1 dígito
+    const isolatedRegex = /\b\d{5}-\d\b/g;
+    const matches = cleanText.match(isolatedRegex);
+    
+    if (matches && matches.length > 0) {
+      // Se houver mais de um, o primeiro costuma ser o correto no topo do boleto
+      return matches[0];
+    }
+    
+    // 4. Fallback 2: Tenta qualquer número com hífen de 4 a 8 dígitos caso o boleto varie
+    const flexibleRegex = /\b\d{4,8}-\d\b/g;
+    const flexMatches = cleanText.match(flexibleRegex);
+    if (flexMatches && flexMatches.length > 0) {
+      return flexMatches[0];
+    }
+
+    return null;
+  };
+
   const processPDF = async (file: File) => {
     setState({ isProcessing: true, progress: 0, files: [], error: null });
 
@@ -27,34 +60,12 @@ const App: React.FC = () => {
       for (let i = 1; i <= pageCount; i++) {
         setState(prev => ({ ...prev, progress: Math.round(((i - 1) / pageCount) * 100) }));
 
-        const imageBuffer = originalArrayBuffer.slice(0);
-        let docNumberRaw = "";
-        
-        try {
-          const imageBase64 = await getPageAsImage(imageBuffer, i);
-          docNumberRaw = await extractDocNumber(imageBase64);
-        } catch (ocrErr) {
-          docNumberRaw = "ERRO_PROCESSAMENTO";
-        }
-        
-        let docNumber = docNumberRaw.trim().toUpperCase();
-        
-        // Se retornar erro de chave, avisa o usuário
-        if (docNumber === "ERRO_SEM_CHAVE") {
-          throw new Error("API KEY NÃO CONFIGURADA. Verifique as variáveis de ambiente no Vercel.");
-        }
+        // Extrai o texto da página atual com reconstrução de linhas
+        const text = await getPageText(originalArrayBuffer.slice(0), i);
+        let docNumber = findDocNumber(text);
 
-        // Limpeza do retorno
-        if (docNumber.includes(':')) {
-          docNumber = docNumber.split(':').pop()?.trim() || docNumber;
-        }
-
-        if (["NAO_ENCONTRADO", "ERRO_LEITURA", "ERRO_IA", "ERRO_PROCESSAMENTO"].includes(docNumber)) {
+        if (!docNumber) {
           docNumber = `BOLETO-PAG-${i}`;
-        } else {
-          // Mantém apenas o que interessa para o nome do arquivo
-          docNumber = docNumber.replace(/[^0-9-]/g, '');
-          if (!docNumber || docNumber === "-") docNumber = `BOLETO-PAG-${i}`;
         }
 
         const extractionBuffer = originalArrayBuffer.slice(0);
@@ -76,11 +87,11 @@ const App: React.FC = () => {
 
       setState(prev => ({ ...prev, isProcessing: false, progress: 100 }));
     } catch (err: any) {
-      console.error("Erro no fluxo:", err);
+      console.error("Erro no processamento:", err);
       setState(prev => ({ 
         ...prev, 
         isProcessing: false, 
-        error: err.message || "FALHA NO PROCESSAMENTO. Tente novamente." 
+        error: "ERRO CRÍTICO NO ARQUIVO. Verifique se o PDF não é apenas uma imagem (scan)." 
       }));
     }
   };
@@ -103,7 +114,7 @@ const App: React.FC = () => {
     const url = URL.createObjectURL(content);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `STARTOOLS_BOLETOS_${new Date().getTime()}.zip`;
+    link.download = `BOLETOS_STARTOOLS_${new Date().toISOString().split('T')[0]}.zip`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -118,34 +129,35 @@ const App: React.FC = () => {
     setTimeout(() => URL.revokeObjectURL(url), 100);
   };
 
-  const reset = () => {
-    if(window.confirm("DESEJA LIMPAR A LISTA?")) {
-      setState({ isProcessing: false, progress: 0, files: [], error: null });
-    }
-  };
-
   return (
     <div className="min-h-screen flex flex-col font-sans selection:bg-yellow-brand selection:text-black">
-      <header className="bg-black border-b border-zinc-800 py-10 px-6 sticky top-0 z-40 shadow-2xl">
+      {/* Header Industrial */}
+      <header className="bg-black border-b border-zinc-800 py-8 px-6 sticky top-0 z-40 shadow-xl">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <div className="bg-yellow-brand text-black font-black w-14 h-14 flex items-center justify-center text-3xl skew-x-[-12deg]">
+          <div className="flex items-center gap-4">
+            <div className="bg-yellow-brand text-black font-black w-12 h-12 flex items-center justify-center text-2xl skew-x-[-10deg]">
               ST
             </div>
-            <h1 className="text-4xl font-black tracking-tighter uppercase italic">
+            <h1 className="text-3xl font-black tracking-tighter uppercase italic">
               PDF <span className="text-yellow-brand">SLICER</span> STARTOOLS
             </h1>
+          </div>
+          <div className="hidden sm:flex items-center gap-4">
+            <span className="bg-zinc-900 text-zinc-500 text-[10px] px-4 py-2 rounded-full font-bold uppercase tracking-widest border border-zinc-800">
+              Pattern: 00000-0
+            </span>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl mx-auto w-full p-6 lg:p-12">
+      <main className="flex-1 max-w-7xl mx-auto w-full p-6 lg:p-10">
+        {/* Dropzone Principal */}
         <div 
           onClick={() => !state.isProcessing && fileInputRef.current?.click()}
-          className={`relative group mb-16 p-20 border-2 border-dashed rounded-xl transition-all duration-500 flex flex-col items-center justify-center gap-8 ${
+          className={`relative group mb-12 p-16 border-2 border-dashed rounded-2xl transition-all duration-300 flex flex-col items-center justify-center gap-6 ${
             state.isProcessing 
-            ? 'border-yellow-brand/30 bg-yellow-brand/5 cursor-wait' 
-            : 'border-zinc-800 bg-zinc-900/10 hover:border-yellow-brand hover:bg-zinc-900/30 cursor-pointer'
+            ? 'border-yellow-brand/20 bg-yellow-brand/5 cursor-wait' 
+            : 'border-zinc-800 bg-zinc-900/10 hover:border-yellow-brand hover:bg-zinc-900/20 cursor-pointer'
           }`}
         >
           {state.isProcessing && <div className="scan-line"></div>}
@@ -159,29 +171,29 @@ const App: React.FC = () => {
             disabled={state.isProcessing}
           />
           
-          <div className={`w-24 h-24 rounded-full border-4 flex items-center justify-center transition-all ${
+          <div className={`w-20 h-20 rounded-2xl flex items-center justify-center transition-all rotate-3 group-hover:rotate-0 ${
             state.isProcessing 
-            ? 'border-yellow-brand text-yellow-brand animate-pulse scale-110' 
-            : 'border-zinc-800 text-zinc-700 group-hover:border-yellow-brand group-hover:text-yellow-brand group-hover:scale-110'
+            ? 'bg-yellow-brand text-black animate-pulse' 
+            : 'bg-zinc-900 text-zinc-700 group-hover:bg-yellow-brand group-hover:text-black'
           }`}>
-            <i className={`fa-solid ${state.isProcessing ? 'fa-spinner fa-spin' : 'fa-upload'} text-4xl`}></i>
+            <i className={`fa-solid ${state.isProcessing ? 'fa-cog fa-spin' : 'fa-file-pdf'} text-3xl`}></i>
           </div>
           
-          <div className="text-center z-20">
-            <h2 className="text-3xl font-black uppercase tracking-widest mb-3">
-              {state.isProcessing ? 'PROCESSANDO DOCUMENTO' : 'UPLOAD DE PDF'}
+          <div className="text-center">
+            <h2 className="text-2xl font-black uppercase tracking-widest mb-2">
+              {state.isProcessing ? 'FATIAMENTO INDUSTRIAL' : 'INICIAR PROCESSO'}
             </h2>
-            <p className="text-zinc-500 font-medium tracking-wide">
+            <p className="text-zinc-500 text-sm font-medium">
               {state.isProcessing 
-                ? `IDENTIFICANDO NÚMERO NA PÁGINA ${state.files.length + 1}...` 
-                : 'SELECIONE O PDF COM OS BOLETOS BRADESCO'}
+                ? `Extraindo número da página ${state.files.length + 1}...` 
+                : 'Arraste ou clique para carregar o PDF de boletos'}
             </p>
           </div>
 
           {state.isProcessing && (
-            <div className="w-full max-w-xl bg-zinc-900 h-1.5 rounded-full overflow-hidden mt-6">
+            <div className="w-full max-w-md bg-zinc-900 h-1 rounded-full overflow-hidden mt-4">
               <div 
-                className="bg-yellow-brand h-full transition-all duration-500" 
+                className="bg-yellow-brand h-full transition-all duration-300" 
                 style={{ width: `${state.progress}%` }}
               ></div>
             </div>
@@ -189,76 +201,77 @@ const App: React.FC = () => {
         </div>
 
         {state.error && (
-          <div className="bg-red-600 text-white p-6 rounded-lg mb-12 font-black uppercase text-sm tracking-widest flex items-center gap-4 shadow-xl">
-            <i className="fa-solid fa-circle-exclamation text-2xl"></i>
-            {state.error}
+          <div className="bg-red-950/50 border border-red-900 text-red-400 p-5 rounded-xl mb-10 flex items-center gap-4 animate-in fade-in duration-300">
+            <i className="fa-solid fa-triangle-exclamation text-xl"></i>
+            <span className="font-bold text-sm uppercase tracking-wider">{state.error}</span>
           </div>
         )}
 
+        {/* Gallery */}
         {state.files.length > 0 && (
-          <div className="animate-in fade-in slide-in-from-bottom-8 duration-500">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8 mb-12 border-b-2 border-zinc-800 pb-10">
+          <div className="animate-in slide-in-from-bottom-5 duration-500">
+            <div className="flex flex-col md:flex-row items-end justify-between gap-6 mb-8 border-b border-zinc-800 pb-8">
               <div>
-                <h3 className="text-5xl font-black uppercase tracking-tighter mb-2">
-                  ARQUIVOS <span className="text-yellow-brand">PRONTOS</span>
+                <h3 className="text-4xl font-black uppercase tracking-tighter">
+                  BOLETOS <span className="text-yellow-brand">GERADOS</span>
                 </h3>
-                <p className="text-zinc-500 font-bold uppercase text-xs tracking-[0.3em]">Total: {state.files.length}</p>
+                <p className="text-zinc-500 font-bold uppercase text-[10px] tracking-[0.4em] mt-1">
+                  Arquivos prontos para arquivamento: {state.files.length}
+                </p>
               </div>
               
-              <div className="flex flex-wrap gap-4">
+              <div className="flex gap-3">
                 <button 
-                  onClick={reset}
-                  className="bg-zinc-900 hover:bg-zinc-800 text-white font-black px-8 py-4 rounded-lg text-xs uppercase tracking-widest transition-all"
+                  onClick={() => setState({ isProcessing: false, progress: 0, files: [], error: null })}
+                  className="bg-zinc-900 hover:bg-zinc-800 text-zinc-400 font-bold px-6 py-3 rounded-lg text-[10px] uppercase tracking-widest transition-all"
                 >
                   LIMPAR
                 </button>
                 {!state.isProcessing && (
                   <button 
                     onClick={downloadAll}
-                    className="bg-yellow-brand hover:bg-white text-black font-black px-10 py-4 rounded-lg text-xs uppercase tracking-[0.2em] transition-all shadow-lg active:scale-95"
+                    className="bg-yellow-brand hover:bg-white text-black font-black px-8 py-3 rounded-lg text-[10px] uppercase tracking-[0.2em] transition-all shadow-lg active:scale-95"
                   >
-                    BAIXAR TUDO (.ZIP)
+                    BAIXAR TODOS (.ZIP)
                   </button>
                 )}
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {state.files.map((file) => (
                 <div 
                   key={file.id} 
-                  className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-6 group hover:border-yellow-brand transition-all flex flex-col shadow-sm"
+                  className="bg-zinc-900/40 border border-zinc-800 hover:border-yellow-brand/50 rounded-xl p-5 group transition-all"
                 >
-                  <div className="flex items-start justify-between mb-8">
-                    <div className="bg-black w-14 h-14 rounded-xl flex items-center justify-center text-yellow-brand border border-zinc-800 group-hover:border-yellow-brand/40 transition-all">
-                      <i className="fa-solid fa-file-invoice-dollar text-2xl"></i>
+                  <div className="flex justify-between items-start mb-6">
+                    <div className="w-10 h-10 rounded-lg bg-black flex items-center justify-center text-yellow-brand border border-zinc-800 group-hover:border-yellow-brand/30">
+                      <i className="fa-solid fa-barcode text-lg"></i>
                     </div>
-                    <div className="text-right">
-                      <span className="bg-zinc-800 text-zinc-400 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest">
-                        PÁG {file.originalPage}
-                      </span>
-                    </div>
+                    <span className="text-[9px] font-black text-zinc-600 bg-black px-2 py-1 rounded">
+                      PAG {file.originalPage}
+                    </span>
                   </div>
 
-                  <div className="mb-8">
-                    <h4 className="text-xl font-black text-white truncate mb-2 group-hover:text-yellow-brand transition-colors" title={file.name}>
+                  <div className="mb-6">
+                    <p className="text-zinc-500 text-[9px] font-bold uppercase tracking-widest mb-1">Doc. Identificado</p>
+                    <h4 className="text-lg font-black text-white truncate group-hover:text-yellow-brand" title={file.name}>
                       {file.name}
                     </h4>
-                    <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-[0.2em]">Número do Documento</p>
                   </div>
 
-                  <div className="mt-auto grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-2">
                     <button 
                       onClick={() => setSelectedFile(file)}
-                      className="bg-zinc-800 hover:bg-zinc-700 text-white font-black py-4 rounded-xl text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                      className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded-lg text-[9px] uppercase tracking-widest transition-all"
                     >
-                      <i className="fa-solid fa-eye"></i> VER
+                      VISUALIZAR
                     </button>
                     <button 
                       onClick={(e) => downloadSingle(file, e)}
-                      className="bg-yellow-brand hover:bg-white text-black font-black py-4 rounded-xl text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-sm"
+                      className="bg-yellow-brand hover:bg-white text-black font-black py-3 rounded-lg text-[9px] uppercase tracking-widest transition-all"
                     >
-                      <i className="fa-solid fa-download"></i> BAIXAR
+                      SALVAR
                     </button>
                   </div>
                 </div>
@@ -268,58 +281,63 @@ const App: React.FC = () => {
         )}
 
         {!state.isProcessing && state.files.length === 0 && (
-          <div className="py-32 text-center opacity-10">
-            <i className="fa-solid fa-file-pdf text-[120px] mb-8"></i>
-            <h3 className="text-2xl font-black uppercase tracking-[0.5em]">Aguardando PDF</h3>
+          <div className="py-24 text-center opacity-10 flex flex-col items-center">
+            <i className="fa-solid fa-layer-group text-8xl mb-6"></i>
+            <h3 className="text-xl font-black uppercase tracking-[0.6em]">Aguardando Produção</h3>
           </div>
         )}
       </main>
 
+      {/* Modal Preview */}
       {selectedFile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 animate-in fade-in duration-300">
-          <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setSelectedFile(null)}></div>
-          <div className="relative w-full max-w-5xl h-full bg-zinc-900 rounded-3xl overflow-hidden flex flex-col shadow-2xl border border-zinc-800">
-            <div className="bg-black p-6 border-b border-zinc-800 flex items-center justify-between">
-              <h4 className="text-sm font-black uppercase tracking-widest text-yellow-brand">{selectedFile.name}</h4>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
+          <div className="absolute inset-0 bg-black/95 backdrop-blur-sm" onClick={() => setSelectedFile(null)}></div>
+          <div className="relative w-full max-w-4xl h-[90vh] bg-zinc-900 rounded-2xl overflow-hidden flex flex-col shadow-2xl border border-zinc-800">
+            <div className="bg-black p-5 border-b border-zinc-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <i className="fa-solid fa-file-pdf text-yellow-brand"></i>
+                <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-400">{selectedFile.name}</h4>
+              </div>
               <button 
                 onClick={() => setSelectedFile(null)}
-                className="w-12 h-12 rounded-full bg-zinc-800 text-white hover:bg-yellow-brand hover:text-black transition-all flex items-center justify-center"
+                className="w-10 h-10 rounded-full bg-zinc-800 text-white hover:bg-yellow-brand hover:text-black transition-all flex items-center justify-center"
               >
-                <i className="fa-solid fa-xmark text-xl"></i>
+                <i className="fa-solid fa-xmark"></i>
               </button>
             </div>
             
             <div className="flex-1 bg-zinc-950">
               <iframe 
-                src={`${URL.createObjectURL(selectedFile.blob)}#toolbar=0&navpanes=0`} 
+                src={`${URL.createObjectURL(selectedFile.blob)}#toolbar=0`} 
                 className="w-full h-full border-none"
-                title="Preview"
+                title="Preview Boleto"
               />
             </div>
 
-            <div className="p-8 bg-black flex justify-center border-t border-zinc-800">
+            <div className="p-6 bg-black border-t border-zinc-800 flex justify-center">
               <button 
                 onClick={(e) => downloadSingle(selectedFile, e)}
-                className="bg-yellow-brand text-black font-black px-16 py-5 rounded-xl text-xs uppercase tracking-[0.3em] hover:bg-white transition-all shadow-xl"
+                className="bg-yellow-brand text-black font-black px-12 py-4 rounded-xl text-[10px] uppercase tracking-[0.4em] hover:bg-white transition-all"
               >
-                BAIXAR ESTA PÁGINA
+                CONFIRMAR E BAIXAR
               </button>
             </div>
           </div>
         </div>
       )}
 
-      <footer className="py-16 bg-black border-t border-zinc-900 mt-20">
+      <footer className="py-12 bg-black border-t border-zinc-900 mt-auto">
         <div className="max-w-7xl mx-auto px-6 text-center">
-          <p className="text-xs font-black uppercase tracking-[0.5em] text-zinc-500 mb-2">
-            STARTOOLS INDUSTRIAL SOLUTIONS
+          <p className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-600 mb-4">
+            STARTOOLS INDUSTRIAL DATA PROCESSING
           </p>
-          <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-6 italic">
-            Created by Hamza Brykcy
-          </p>
-          <div className="w-20 h-1 bg-yellow-brand mx-auto mb-6"></div>
-          <p className="text-[10px] font-bold text-zinc-700 uppercase tracking-widest">
-            © {new Date().getFullYear()} SISTEMA DE PROCESSAMENTO DE ARQUIVOS. TODOS OS DIREITOS RESERVADOS.
+          <div className="flex justify-center gap-2 mb-6">
+            <div className="w-1 h-1 bg-yellow-brand rounded-full"></div>
+            <div className="w-10 h-1 bg-yellow-brand rounded-full"></div>
+            <div className="w-1 h-1 bg-yellow-brand rounded-full"></div>
+          </div>
+          <p className="text-[9px] font-bold text-zinc-800 uppercase tracking-widest">
+            ENGINE V3.0 • VECTOR TEXT RECONSTRUCTION • NO CLOUD PROCESSING
           </p>
         </div>
       </footer>
