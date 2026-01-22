@@ -1,4 +1,3 @@
-
 {
   "name": "PDF Slicer Startools",
   "description": "Sistema industrial para separação inteligente de boletos bancários. Extrai automaticamente o número do documento (00000-0) via leitura direta de texto e divide o PDF em arquivos individuais.",

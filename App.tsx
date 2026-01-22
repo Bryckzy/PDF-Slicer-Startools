@@ -15,18 +15,40 @@ const App: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<ProcessedFile | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const findBeneficiary = (text: string): string | null => {
+    // Procura pelo rótulo do beneficiário
+    const label = "Nome do beneficiário";
+    const lowerText = text.toLowerCase();
+    const idx = lowerText.indexOf(label.toLowerCase());
+    
+    if (idx === -1) return null;
+
+    // Extrai o conteúdo após o rótulo
+    const afterLabel = text.substring(idx + label.length).trim();
+    // Limpa caracteres iniciais comuns como ':' ou '-' e pega a primeira linha significativa
+    const cleanLine = afterLabel.replace(/^[:\-\s]+/, '').split('\n')[0];
+    
+    // Divide em palavras, filtra para pegar apenas palavras reais (sem números/CNPJ grudados)
+    const words = cleanLine.split(/\s+/).filter(w => /^[a-zA-ZÀ-ú]{2,}$/.test(w));
+    
+    if (words.length >= 2) {
+      return `${words[0].toUpperCase()}_${words[1].toUpperCase()}`;
+    } else if (words.length === 1) {
+      return words[0].toUpperCase();
+    }
+    return null;
+  };
+
   const findDocNumber = (text: string): string | null => {
     // 1. Limpeza pesada: Remove espaços múltiplos e normaliza hífens
     const cleanText = text.replace(/\s+/g, ' ').replace(/\s*-\s*/g, '-');
     
     // 2. Tenta encontrar a label "Num. do Documento" e pegar o valor próximo
-    // No OCR do Bradesco, geralmente vem "Data do Documento Num. do Documento ... 06/11/2025 24277-4"
-    // Vamos procurar por uma data seguida do padrão XXXXX-X
+    // Procura por uma data seguida do padrão XXXXX-X (5 dígitos - 1 dígito)
     const dateAndNumberRegex = /(\d{2}\/\d{2}\/\d{4})\s*(\d{5}-\d)/g;
     const dateMatches = [...cleanText.matchAll(dateAndNumberRegex)];
     
     if (dateMatches.length > 0) {
-      // Retorna o segundo grupo de captura (o número do documento) do primeiro match
       return dateMatches[0][2];
     }
 
@@ -35,11 +57,10 @@ const App: React.FC = () => {
     const matches = cleanText.match(isolatedRegex);
     
     if (matches && matches.length > 0) {
-      // Se houver mais de um, o primeiro costuma ser o correto no topo do boleto
       return matches[0];
     }
     
-    // 4. Fallback 2: Tenta qualquer número com hífen de 4 a 8 dígitos caso o boleto varie
+    // 4. Fallback 2: Tenta qualquer número com hífen de 4 a 8 dígitos
     const flexibleRegex = /\b\d{4,8}-\d\b/g;
     const flexMatches = cleanText.match(flexibleRegex);
     if (flexMatches && flexMatches.length > 0) {
@@ -62,10 +83,17 @@ const App: React.FC = () => {
 
         // Extrai o texto da página atual com reconstrução de linhas
         const text = await getPageText(originalArrayBuffer.slice(0), i);
-        let docNumber = findDocNumber(text);
+        const docNumber = findDocNumber(text);
+        const beneficiary = findBeneficiary(text);
 
-        if (!docNumber) {
-          docNumber = `BOLETO-PAG-${i}`;
+        // Constrói o nome final do arquivo
+        let finalFileName = "";
+        if (beneficiary && docNumber) {
+          finalFileName = `${beneficiary}_${docNumber}.pdf`;
+        } else if (docNumber) {
+          finalFileName = `${docNumber}.pdf`;
+        } else {
+          finalFileName = `BOLETO-PAG-${i}.pdf`;
         }
 
         const extractionBuffer = originalArrayBuffer.slice(0);
@@ -74,9 +102,9 @@ const App: React.FC = () => {
 
         const newFile: ProcessedFile = {
           id: `file-${i}-${Date.now()}`,
-          name: `${docNumber}.pdf`,
+          name: finalFileName,
           originalPage: i,
-          docNumber: docNumber,
+          docNumber: docNumber || 'N/A',
           blob: blob,
           status: 'completed'
         };
@@ -144,7 +172,7 @@ const App: React.FC = () => {
           </div>
           <div className="hidden sm:flex items-center gap-4">
             <span className="bg-zinc-900 text-zinc-500 text-[10px] px-4 py-2 rounded-full font-bold uppercase tracking-widest border border-zinc-800">
-              Pattern: 00000-0
+              Pattern: NOME_00000-0
             </span>
           </div>
         </div>
@@ -185,7 +213,7 @@ const App: React.FC = () => {
             </h2>
             <p className="text-zinc-500 text-sm font-medium">
               {state.isProcessing 
-                ? `Extraindo número da página ${state.files.length + 1}...` 
+                ? `Extraindo dados da página ${state.files.length + 1}...` 
                 : 'Arraste ou clique para carregar o PDF de boletos'}
             </p>
           </div>
@@ -216,7 +244,7 @@ const App: React.FC = () => {
                   BOLETOS <span className="text-yellow-brand">GERADOS</span>
                 </h3>
                 <p className="text-zinc-500 font-bold uppercase text-[10px] tracking-[0.4em] mt-1">
-                  Arquivos prontos para arquivamento: {state.files.length}
+                  Arquivos prontos: {state.files.length}
                 </p>
               </div>
               
@@ -255,7 +283,7 @@ const App: React.FC = () => {
 
                   <div className="mb-6">
                     <p className="text-zinc-500 text-[9px] font-bold uppercase tracking-widest mb-1">Doc. Identificado</p>
-                    <h4 className="text-lg font-black text-white truncate group-hover:text-yellow-brand" title={file.name}>
+                    <h4 className="text-sm font-black text-white truncate group-hover:text-yellow-brand" title={file.name}>
                       {file.name}
                     </h4>
                   </div>
@@ -265,7 +293,7 @@ const App: React.FC = () => {
                       onClick={() => setSelectedFile(file)}
                       className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded-lg text-[9px] uppercase tracking-widest transition-all"
                     >
-                      VISUALIZAR
+                      PREVIEW
                     </button>
                     <button 
                       onClick={(e) => downloadSingle(file, e)}
