@@ -27,14 +27,16 @@ const App: React.FC = () => {
       for (let i = 1; i <= pageCount; i++) {
         setState(prev => ({ ...prev, progress: Math.round(((i - 1) / pageCount) * 100) }));
 
+        // Clona o buffer para evitar que o worker do pdf.js o desconecte
         const imageBuffer = originalArrayBuffer.slice(0);
         const imageBase64 = await getPageAsImage(imageBuffer, i);
         const docNumberRaw = await extractDocNumber(imageBase64);
         
         const docNumber = docNumberRaw.trim().toUpperCase() === "NAO_ENCONTRADO" 
-          ? `BOLETO-S/N-PG${i}` 
+          ? `BOLETO-S-N-PG${i}` 
           : docNumberRaw.replace(/[^0-9-]/g, '');
 
+        // Clona o buffer para a extração da página
         const extractionBuffer = originalArrayBuffer.slice(0);
         const pagePdfBytes = await extractSinglePage(extractionBuffer, i);
         const blob = new Blob([pagePdfBytes], { type: 'application/pdf' });
@@ -104,7 +106,7 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col font-sans selection:bg-yellow-brand selection:text-black">
-      {/* Header Minimalista Preto e Amarelo */}
+      {/* Header Minimalista */}
       <header className="bg-black border-b border-zinc-800 py-10 px-6 sticky top-0 z-40 shadow-2xl">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-6">
@@ -175,7 +177,7 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* Listagem de Arquivos Gerados */}
+        {/* Listagem de Arquivos */}
         {state.files.length > 0 && (
           <div className="animate-in fade-in slide-in-from-bottom-8 duration-500">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8 mb-12 border-b-2 border-zinc-800 pb-10">
@@ -204,9 +206,8 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Grid de Cards dos Boletos */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {state.files.map((file, index) => (
+              {state.files.map((file) => (
                 <div 
                   key={file.id} 
                   className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-6 group hover:border-yellow-brand transition-all flex flex-col shadow-sm"
@@ -249,7 +250,6 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* Estado Vazio */}
         {!state.isProcessing && state.files.length === 0 && (
           <div className="py-32 text-center opacity-10">
             <i className="fa-solid fa-file-pdf text-[120px] mb-8"></i>
@@ -258,7 +258,6 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* Visualizador de PDF */}
       {selectedFile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6 animate-in fade-in duration-300">
           <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setSelectedFile(null)}></div>
@@ -293,11 +292,14 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Footer Minimalista */}
+      {/* Footer Atualizado */}
       <footer className="py-16 bg-black border-t border-zinc-900 mt-20">
         <div className="max-w-7xl mx-auto px-6 text-center">
-          <p className="text-xs font-black uppercase tracking-[0.5em] text-zinc-500 mb-4">
+          <p className="text-xs font-black uppercase tracking-[0.5em] text-zinc-500 mb-2">
             STARTOOLS INDUSTRIAL SOLUTIONS
+          </p>
+          <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest mb-6 italic">
+            Created by Hamza Brykcy
           </p>
           <div className="w-20 h-1 bg-yellow-brand mx-auto mb-6"></div>
           <p className="text-[10px] font-bold text-zinc-700 uppercase tracking-widest">
