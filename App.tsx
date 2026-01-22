@@ -29,14 +29,27 @@ const App: React.FC = () => {
 
         // Clona o buffer para evitar que o worker do pdf.js o desconecte
         const imageBuffer = originalArrayBuffer.slice(0);
-        const imageBase64 = await getPageAsImage(imageBuffer, i);
-        const docNumberRaw = await extractDocNumber(imageBase64);
+        let docNumberRaw = "";
         
-        const docNumber = docNumberRaw.trim().toUpperCase() === "NAO_ENCONTRADO" 
-          ? `BOLETO-S-N-PG${i}` 
-          : docNumberRaw.replace(/[^0-9-]/g, '');
+        try {
+          const imageBase64 = await getPageAsImage(imageBuffer, i);
+          docNumberRaw = await extractDocNumber(imageBase64);
+        } catch (ocrErr) {
+          console.warn(`Falha no OCR da página ${i}:`, ocrErr);
+          docNumberRaw = "ERRO_LEITURA";
+        }
+        
+        // Limpeza do número do documento
+        let docNumber = docNumberRaw.trim().toUpperCase();
+        if (docNumber === "NAO_ENCONTRADO" || docNumber === "ERRO_LEITURA" || docNumber === "ERRO_IA") {
+          docNumber = `BOLETO-SEM-NUMERO-PAG-${i}`;
+        } else {
+          // Mantém apenas números e hífens
+          docNumber = docNumber.replace(/[^0-9-]/g, '');
+          if (!docNumber) docNumber = `BOLETO-ID-PAG-${i}`;
+        }
 
-        // Clona o buffer para a extração da página
+        // Extração da página individual
         const extractionBuffer = originalArrayBuffer.slice(0);
         const pagePdfBytes = await extractSinglePage(extractionBuffer, i);
         const blob = new Blob([pagePdfBytes], { type: 'application/pdf' });
@@ -56,11 +69,11 @@ const App: React.FC = () => {
 
       setState(prev => ({ ...prev, isProcessing: false, progress: 100 }));
     } catch (err: any) {
-      console.error("Erro no processamento:", err);
+      console.error("Erro crítico no processamento do lote:", err);
       setState(prev => ({ 
         ...prev, 
         isProcessing: false, 
-        error: "FALHA NO PROCESSAMENTO. VERIFIQUE A INTEGRIDADE DO ARQUIVO PDF." 
+        error: `ERRO DE PROCESSAMENTO: ${err.message || 'Falha técnica ao ler o PDF'}. Verifique se o arquivo não está protegido por senha.` 
       }));
     }
   };
@@ -70,7 +83,7 @@ const App: React.FC = () => {
     if (file && file.type === 'application/pdf') {
       processPDF(file);
     } else {
-      setState(prev => ({ ...prev, error: "TIPO DE ARQUIVO INVÁLIDO. UTILIZE APENAS PDF." }));
+      setState(prev => ({ ...prev, error: "ARQUIVO INVÁLIDO. Selecione um documento PDF." }));
     }
   };
 
@@ -83,7 +96,7 @@ const App: React.FC = () => {
     const url = URL.createObjectURL(content);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `BOLETOS_STARTOOLS_${new Date().getTime()}.zip`;
+    link.download = `BATCH_STARTOOLS_${new Date().getTime()}.zip`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -106,11 +119,11 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col font-sans selection:bg-yellow-brand selection:text-black">
-      {/* Header Minimalista */}
+      {/* Header */}
       <header className="bg-black border-b border-zinc-800 py-10 px-6 sticky top-0 z-40 shadow-2xl">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-6">
-            <div className="bg-yellow-brand text-black font-black w-14 h-14 flex items-center justify-center text-3xl skew-x-[-12deg] shadow-[4px_4px_0px_#ffffff20]">
+            <div className="bg-yellow-brand text-black font-black w-14 h-14 flex items-center justify-center text-3xl skew-x-[-12deg]">
               ST
             </div>
             <h1 className="text-4xl font-black tracking-tighter uppercase italic">
@@ -121,7 +134,7 @@ const App: React.FC = () => {
       </header>
 
       <main className="flex-1 max-w-7xl mx-auto w-full p-6 lg:p-12">
-        {/* Área de Upload */}
+        {/* Dropzone */}
         <div 
           onClick={() => !state.isProcessing && fileInputRef.current?.click()}
           className={`relative group mb-16 p-20 border-2 border-dashed rounded-xl transition-all duration-500 flex flex-col items-center justify-center gap-8 ${
@@ -151,12 +164,12 @@ const App: React.FC = () => {
           
           <div className="text-center z-20">
             <h2 className="text-3xl font-black uppercase tracking-widest mb-3">
-              {state.isProcessing ? 'PROCESSANDO DOCUMENTO' : 'UPLOAD DE PDF'}
+              {state.isProcessing ? 'PROCESSANDO LOTE' : 'UPLOAD DE PDF'}
             </h2>
             <p className="text-zinc-500 font-medium tracking-wide">
               {state.isProcessing 
-                ? `PÁGINA ATUAL: ${state.files.length + 1}` 
-                : 'SELECIONE O ARQUIVO PDF COM OS BOLETOS'}
+                ? `ANALISANDO PÁGINA ${state.files.length + 1}...` 
+                : 'SELECIONE O ARQUIVO PDF PARA DIVISÃO'}
             </p>
           </div>
 
@@ -177,7 +190,7 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* Listagem de Arquivos */}
+        {/* Galeria de Resultados */}
         {state.files.length > 0 && (
           <div className="animate-in fade-in slide-in-from-bottom-8 duration-500">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8 mb-12 border-b-2 border-zinc-800 pb-10">
@@ -227,7 +240,7 @@ const App: React.FC = () => {
                     <h4 className="text-xl font-black text-white truncate mb-2 group-hover:text-yellow-brand transition-colors" title={file.name}>
                       {file.name.replace('.pdf', '')}
                     </h4>
-                    <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-[0.2em]">Número do Documento</p>
+                    <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-[0.2em]">Nome do Arquivo</p>
                   </div>
 
                   <div className="mt-auto grid grid-cols-2 gap-4">
@@ -258,6 +271,7 @@ const App: React.FC = () => {
         )}
       </main>
 
+      {/* Visualizador */}
       {selectedFile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6 animate-in fade-in duration-300">
           <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setSelectedFile(null)}></div>
@@ -276,7 +290,7 @@ const App: React.FC = () => {
               <iframe 
                 src={`${URL.createObjectURL(selectedFile.blob)}#toolbar=0&navpanes=0`} 
                 className="w-full h-full border-none"
-                title="Preview do Boleto"
+                title="Preview"
               />
             </div>
 
@@ -285,14 +299,14 @@ const App: React.FC = () => {
                 onClick={(e) => downloadSingle(selectedFile, e)}
                 className="bg-yellow-brand text-black font-black px-16 py-5 rounded-xl text-xs uppercase tracking-[0.3em] hover:bg-white transition-all shadow-xl"
               >
-                BAIXAR ESTE BOLETO
+                BAIXAR DOCUMENTO
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Footer Atualizado */}
+      {/* Footer */}
       <footer className="py-16 bg-black border-t border-zinc-900 mt-20">
         <div className="max-w-7xl mx-auto px-6 text-center">
           <p className="text-xs font-black uppercase tracking-[0.5em] text-zinc-500 mb-2">
